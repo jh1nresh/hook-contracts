@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "../BaseERC8183Hook.sol";
-import "../interfaces/IERC8183HookMetadata.sol";
-import "@erc8183/AgenticCommerce.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {BaseERC8183Hook} from "../BaseERC8183Hook.sol";
+import {IERC8183HookMetadata} from "../interfaces/IERC8183HookMetadata.sol";
+import {ERC8183} from "@erc8183/ERC8183.sol";
 
 /**
  * @title FundTransferHook
- * @notice Example ACP hook for two-phase fund transfer jobs.
+ * @notice Example ERC-8183 hook for two-phase fund transfer jobs.
  *
  * USE CASE
  * --------
  * An agent's job is to convert / bridge / swap tokens on the client's behalf.
- * The client provides capital (e.g. USDC) to the provider, who uses it to
- * produce output tokens (e.g. DAI). The hook ensures the provider deposits the
- * output tokens back before the job can be completed, then releases them to a
- * designated buyer (usually the client).
+ * The client provides capital to the provider, who uses it to produce output
+ * tokens. The hook ensures the provider deposits the output tokens back before
+ * the job can be completed, then releases them to a designated buyer (usually
+ * the client).
  *
- * The service fee for the job is handled by the core ACP escrow (job.budget).
+ * The service fee for the job is handled by the core ERC-8183 escrow (job.budget).
  * The capital and output token flow is handled entirely by this hook.
  *
  * FLOW (hook callbacks marked with ->)
@@ -84,12 +84,12 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
     }
 
     /// @dev Typed accessor for the core contract
-    function _core() internal view returns (AgenticCommerce) {
-        return AgenticCommerce(erc8183Contract);
+    function _core() internal view returns (ERC8183) {
+        return ERC8183(erc8183Contract);
     }
 
     // -------------------------------------------------------------------------
-    // Hook callbacks (called by AgenticCommerce via beforeAction/afterAction)
+    // Hook callbacks (called by ERC8183 via beforeAction/afterAction)
     // -------------------------------------------------------------------------
 
     /// @dev Store transfer commitment from setBudget optParams.
@@ -116,7 +116,7 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
     function _preFund(uint256 jobId, address, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
         if (c.buyer == address(0)) revert CommitmentNotSet();
-        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        ERC8183.Job memory job = _core().getJob(jobId);
         uint256 allowance = token.allowance(job.client, address(this));
         if (allowance < c.transferAmount) revert InsufficientAllowance();
     }
@@ -124,7 +124,7 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
     /// @dev Pull transferAmount from client and forward to provider (capital).
     function _postFund(uint256 jobId, address, bytes memory) internal override {
         TransferCommitment memory c = commitments[jobId];
-        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        ERC8183.Job memory job = _core().getJob(jobId);
         token.safeTransferFrom(job.client, job.provider, c.transferAmount);
     }
 
@@ -133,7 +133,7 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
         TransferCommitment storage c = commitments[jobId];
         if (c.buyer == address(0)) revert CommitmentNotSet();
         if (c.providerDeposited) revert AlreadyDeposited();
-        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        ERC8183.Job memory job = _core().getJob(jobId);
         c.providerDeposited = true;
         // Verify the hook actually received the full committed amount. Fee-on-
         // transfer or rebasing tokens leave the hook short of c.transferAmount,
@@ -162,7 +162,7 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
             delete commitments[jobId];
             return;
         }
-        AgenticCommerce.Job memory job = _core().getJob(jobId);
+        ERC8183.Job memory job = _core().getJob(jobId);
         delete commitments[jobId];
         token.safeTransfer(job.provider, c.transferAmount);
     }
@@ -176,8 +176,8 @@ contract FundTransferHook is BaseERC8183Hook, IERC8183HookMetadata {
     function recoverTokens(uint256 jobId) external {
         TransferCommitment memory c = commitments[jobId];
         if (!c.providerDeposited) revert NothingToRecover();
-        AgenticCommerce.Job memory job = _core().getJob(jobId);
-        if (job.status != AgenticCommerce.JobStatus.Expired) revert JobNotExpired();
+        ERC8183.Job memory job = _core().getJob(jobId);
+        if (job.status != ERC8183.JobStatus.Expired) revert JobNotExpired();
         delete commitments[jobId];
         token.safeTransfer(job.provider, c.transferAmount);
     }
